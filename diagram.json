@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "author": "Distance Traffic-Light Indicator",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-esp32-devkit-v1", "id": "esp32", "top": 150, "left": 250, "attrs": {} },
+
+    { "type": "wokwi-hc-sr04", "id": "sensorTop",   "top": -80,  "left": 250, "attrs": { "distance": "100" } },
+    { "type": "wokwi-hc-sr04", "id": "sensorLeft",  "top": 150, "left": -120, "attrs": { "distance": "100" } },
+    { "type": "wokwi-hc-sr04", "id": "sensorRight", "top": 150, "left": 620, "attrs": { "distance": "100" } },
+
+    { "type": "wokwi-rgb-led", "id": "led", "top": 380, "left": 250, "attrs": { "common": "cathode" } },
+    { "type": "wokwi-resistor", "id": "rR", "top": 360, "left": 190, "rotate": 90, "attrs": { "value": "220" } },
+    { "type": "wokwi-resistor", "id": "rG", "top": 390, "left": 190, "rotate": 90, "attrs": { "value": "220" } },
+    { "type": "wokwi-resistor", "id": "rB", "top": 420, "left": 190, "rotate": 90, "attrs": { "value": "220" } }
+  ],
+  "connections": [
+    ["sensorTop:VCC", "esp32:VIN", "red", []],
+    ["sensorTop:GND", "esp32:GND.1", "black", []],
+    ["sensorTop:TRIG", "esp32:D33", "green", []],
+    ["sensorTop:ECHO", "esp32:D5", "yellow", []],
+
+    ["sensorLeft:VCC", "esp32:VIN", "red", []],
+    ["sensorLeft:GND", "esp32:GND.1", "black", []],
+    ["sensorLeft:TRIG", "esp32:D25", "green", []],
+    ["sensorLeft:ECHO", "esp32:D26", "yellow", []],
+
+    ["sensorRight:VCC", "esp32:VIN", "red", []],
+    ["sensorRight:GND", "esp32:GND.2", "black", []],
+    ["sensorRight:TRIG", "esp32:D27", "green", []],
+    ["sensorRight:ECHO", "esp32:D32", "yellow", []],
+
+    ["esp32:D12", "rR:1", "purple", []],
+    ["rR:2", "led:R", "purple", []],
+    ["esp32:D13", "rG:1", "purple", []],
+    ["rG:2", "led:G", "purple", []],
+    ["esp32:D14", "rB:1", "purple", []],
+    ["rB:2", "led:B", "purple", []],
+    ["led:COM", "esp32:GND.2", "black", []]
+  ]
+}
