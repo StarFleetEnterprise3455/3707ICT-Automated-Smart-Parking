@@ -12,7 +12,11 @@
     { "type": "wokwi-rgb-led", "id": "led", "top": 380, "left": 250, "attrs": { "common": "cathode" } },
     { "type": "wokwi-resistor", "id": "rR", "top": 360, "left": 190, "rotate": 90, "attrs": { "value": "220" } },
     { "type": "wokwi-resistor", "id": "rG", "top": 390, "left": 190, "rotate": 90, "attrs": { "value": "220" } },
-    { "type": "wokwi-resistor", "id": "rB", "top": 420, "left": 190, "rotate": 90, "attrs": { "value": "220" } }
+    { "type": "wokwi-resistor", "id": "rB", "top": 420, "left": 190, "rotate": 90, "attrs": { "value": "220" } },
+
+    { "type": "board-bmp180", "id": "plate", "top": 550, "left": 100, "attrs": { "pressure": "101325" } },
+    { "type": "wokwi-servo", "id": "gateServo", "top": 550, "left": 350, "attrs": {} },
+    { "type": "wokwi-buzzer", "id": "buzzer", "top": 550, "left": 550, "attrs": { "volume": "0.2" } }
   ],
   "connections": [
     ["sensorTop:VCC", "esp32:VIN", "red", []],
@@ -36,6 +40,18 @@
     ["rG:2", "led:G", "purple", []],
     ["esp32:D14", "rB:1", "purple", []],
     ["rB:2", "led:B", "purple", []],
-    ["led:COM", "esp32:GND.2", "black", []]
+    ["led:COM", "esp32:GND.2", "black", []],
+
+    ["plate:VCC", "esp32:3V3", "red", []],
+    ["plate:GND", "esp32:GND.1", "black", []],
+    ["plate:SDA", "esp32:D21", "blue", []],
+    ["plate:SCL", "esp32:D22", "orange", []],
+
+    ["gateServo:PWM", "esp32:D18", "green", []],
+    ["gateServo:V+", "esp32:VIN", "red", []],
+    ["gateServo:GND", "esp32:GND.2", "black", []],
+
+    ["buzzer:2", "esp32:D19", "green", []],
+    ["buzzer:1", "esp32:GND.1", "black", []]
   ]
 }
