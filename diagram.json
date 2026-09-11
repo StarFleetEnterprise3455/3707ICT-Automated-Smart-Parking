@@ -31,7 +31,7 @@
     { "type": "wokwi-buzzer", "id": "buzzer", "top": 600, "left": 900, "attrs": { "volume": "0.2" } },
     { "type": "wokwi-buzzer", "id": "buzzer2", "top": 700, "left": 900, "attrs": { "volume": "0.2" } },
 
-    { "type": "wokwi-led", "id": "gateLed", "top": 700, "left": 700, "attrs": { "color": "blue" } },
+    { "type": "wokwi-led", "id": "gateLed", "top": 700, "left": 700, "attrs": { "color": "red" } },
     { "type": "wokwi-resistor", "id": "rGate", "top": 700, "left": 640, "rotate": 90, "attrs": { "value": "220" } }
   ],
   "connections": [

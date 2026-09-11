@@ -30,11 +30,18 @@
 // its own I2C bus (BMP180 has a fixed address, so two can't share one bus).
 // Pressing EITHER plate opens the gate. Once that same plate is released
 // (vehicle has moved past it), the gate holds open for GATE_HOLD_MS (6s)
-// then closes. This is independent of the bay logic above.
+// then closes. This is independent of the bay logic above - EXCEPT for
+// capacity lockout, below.
 //
-// gateLed flashes for the WHOLE time the gate is open - from the moment a
-// plate press triggers it open, all the way through the post-clear hold,
-// until the gate actually closes. Not just while a plate is being pressed.
+// Capacity lockout: when BOTH bays are full (occupied or overstay - i.e.
+// neither is green), the entry plate no longer opens the gate at all - a
+// press is logged as refused instead. The exit plate is never affected by
+// this, since a full lot should still let cars leave.
+//
+// gateLed: solid RED whenever both bays are full (this takes priority - it's
+// a standing status, not a blip). Otherwise, it flashes red for the whole
+// time the gate is open - from the moment a plate press triggers it open,
+// through the post-clear hold, until the gate actually closes.
 
 #include <Wire.h>
 #include <ESP32Servo.h>
@@ -101,12 +108,14 @@ int16_t plateBaseline = 0;
 bool plateCandidateActive = false;
 uint32_t plateCandidateSince = 0;
 bool plateActive = false;
+int16_t plateLastDelta = 0; // for the Serial debug print - how close to PRESSURE_DELTA_THRESHOLD right now
 
 // --- pressure plate tuning (exit) - same thresholds, independent state ---
 int16_t plateExitBaseline = 0;
 bool plateExitCandidateActive = false;
 uint32_t plateExitCandidateSince = 0;
 bool plateExitActive = false;
+int16_t plateExitLastDelta = 0;
 
 // --- gate FSM ---
 const int      GATE_CLOSED_ANGLE = 0;
@@ -116,6 +125,10 @@ Servo gateServo;
 bool gateOpen = false;
 bool gateForExit = false;  // which plate opened it, so we know which one to wait on
 uint32_t gateHoldUntil = 0; // 0 = not yet counting down
+
+// --- capacity lockout ---
+bool bothBaysFull = false;       // set fresh each loop, before serviceGate() runs
+bool entryRefusedLatched = false; // avoids spamming the refusal log every cycle while held
 
 // Fires one HC-SR04 (given its own TRIG pin) and returns distance in cm, or
 // -1 if nothing echoed back within range. Always reads on ECHO_SHARED_PIN -
@@ -208,6 +221,7 @@ int16_t readRawPressure(TwoWire &bus) {
 void servicePlate() {
   int16_t raw = readRawPressure(Wire);
   int16_t delta = raw - plateBaseline;
+  plateLastDelta = delta;
   bool rawActive = delta > PRESSURE_DELTA_THRESHOLD;
 
   if (rawActive != plateCandidateActive) {
@@ -223,6 +237,7 @@ void servicePlate() {
 void servicePlateExit() {
   int16_t raw = readRawPressure(ExitWire);
   int16_t delta = raw - plateExitBaseline;
+  plateExitLastDelta = delta;
   bool rawActive = delta > PRESSURE_DELTA_THRESHOLD;
 
   if (rawActive != plateExitCandidateActive) {
@@ -237,23 +252,32 @@ void servicePlateExit() {
 // Opens the gate when EITHER plate is pressed; once that same plate clears,
 // holds open for GATE_HOLD_MS before closing again. If both were pressed at
 // once, entry takes priority (an edge case, not something either plate's
-// normal use should trigger).
+// normal use should trigger). Entry is refused outright while bothBaysFull -
+// exit is never blocked by capacity.
 void serviceGate() {
   uint32_t now = millis();
 
   if (!gateOpen) {
     if (plateActive) {
-      gateServo.write(GATE_OPEN_ANGLE);
-      gateOpen = true;
-      gateForExit = false;
-      gateHoldUntil = 0;
-      Serial.println("[GATE] Opening (entry)");
-    } else if (plateExitActive) {
-      gateServo.write(GATE_OPEN_ANGLE);
-      gateOpen = true;
-      gateForExit = true;
-      gateHoldUntil = 0;
-      Serial.println("[GATE] Opening (exit)");
+      if (!bothBaysFull) {
+        gateServo.write(GATE_OPEN_ANGLE);
+        gateOpen = true;
+        gateForExit = false;
+        gateHoldUntil = 0;
+        Serial.println("[GATE] Opening (entry)");
+      } else if (!entryRefusedLatched) {
+        entryRefusedLatched = true;
+        Serial.println("[GATE] Entry refused - capacity FULL");
+      }
+    } else {
+      entryRefusedLatched = false; // plate released, re-arm for the next attempt
+      if (plateExitActive) {
+        gateServo.write(GATE_OPEN_ANGLE);
+        gateOpen = true;
+        gateForExit = true;
+        gateHoldUntil = 0;
+        Serial.println("[GATE] Opening (exit)");
+      }
     }
     return;
   }
@@ -272,10 +296,19 @@ void serviceGate() {
   }
 }
 
-// Flashes gateLed (toggles every GATE_LED_FLASH_MS) for the entire time the
-// gate is open - triggered by a plate press, continues through the post-
-// clear hold, stops the moment the gate actually closes.
+// Solid red whenever both bays are full (a standing status, takes priority).
+// Otherwise, flashes (toggles every GATE_LED_FLASH_MS) for the entire time
+// the gate is open - triggered by a plate press, continues through the
+// post-clear hold, stops the moment the gate actually closes.
 void serviceGateLed() {
+  if (bothBaysFull) {
+    if (!gateLedState) {
+      gateLedState = true;
+      digitalWrite(GATE_LED_PIN, HIGH);
+    }
+    return;
+  }
+
   if (!gateOpen) {
     if (gateLedState) {
       gateLedState = false;
@@ -329,11 +362,6 @@ void loop() {
   uint32_t now = millis();
   if (now - lastReadAt < READ_INTERVAL_MS) return;
   lastReadAt = now;
-
-  servicePlate();
-  servicePlateExit();
-  serviceGate();
-  serviceGateLed();
 
   float topDistance   = readDistanceCm(TOP_TRIG_PIN);
   float leftDistance  = readDistanceCm(LEFT_TRIG_PIN);
@@ -408,4 +436,18 @@ void loop() {
                 bay2LeftDistance,  bay2LeftBlocked  ? "blocked" : "clear",
                 bay2RightDistance, bay2RightBlocked ? "blocked" : "clear",
                 led2Label);
+
+  // Now that both bays' occupancy is known for this cycle, capacity lockout
+  // can be evaluated before the gate/plate logic runs.
+  bothBaysFull = allBlocked && bay2AllBlocked;
+
+  servicePlate();
+  servicePlateExit();
+  serviceGate();
+  serviceGateLed();
+
+  Serial.printf("Entry plate delta: %d / %d%s | Exit plate delta: %d / %d%s%s\n",
+                plateLastDelta, PRESSURE_DELTA_THRESHOLD, plateActive ? " (PRESSED)" : "",
+                plateExitLastDelta, PRESSURE_DELTA_THRESHOLD, plateExitActive ? " (PRESSED)" : "",
+                bothBaysFull ? " | CAPACITY FULL" : "");
 }
