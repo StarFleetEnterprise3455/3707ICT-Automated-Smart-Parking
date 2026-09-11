@@ -26,9 +26,15 @@
 // Each bay has its own buzzer, sounding only during that bay's own overstay
 // (yellow) - Bay 1's buzzer never sounds for Bay 2's overstay and vice versa.
 //
-// Gate rule: a vehicle pressing the plate opens the gate. Once the plate is
-// released (vehicle has moved past it), the gate holds open for GATE_HOLD_MS
+// Gate rule: two plates now - "plate" (entry) and "plateExit" (exit), each on
+// its own I2C bus (BMP180 has a fixed address, so two can't share one bus).
+// Pressing EITHER plate opens the gate. Once that same plate is released
+// (vehicle has moved past it), the gate holds open for GATE_HOLD_MS (6s)
 // then closes. This is independent of the bay logic above.
+//
+// gateLed flashes for the WHOLE time the gate is open - from the moment a
+// plate press triggers it open, all the way through the post-clear hold,
+// until the gate actually closes. Not just while a plate is being pressed.
 
 #include <Wire.h>
 #include <ESP32Servo.h>
@@ -60,7 +66,17 @@ const uint8_t PLATE_SDA_PIN = 21;
 const uint8_t PLATE_SCL_PIN = 22;
 const uint8_t BMP180_ADDR   = 0x77;
 
+// Exit plate - separate I2C bus (Wire1), since BMP180's address is fixed
+// and two can't share one bus.
+const uint8_t PLATE2_SDA_PIN = 26;
+const uint8_t PLATE2_SCL_PIN = 32;
+TwoWire ExitWire = TwoWire(1);
+
 const uint8_t GATE_SERVO_PIN = 18;
+const uint8_t GATE_LED_PIN   = 16; // RX2 - flashes while either plate is pressed
+const uint32_t GATE_LED_FLASH_MS = 200;
+bool gateLedState = false;
+uint32_t gateLedLastToggle = 0;
 
 const uint8_t  BUZZER_PIN      = 19;
 const uint8_t  BUZZER2_PIN     = 5;
@@ -78,7 +94,7 @@ const uint32_t OVERSTAY_MS = 10000; // how long all-blocked must hold before it'
 uint32_t blockedSince = 0;          // Bay 1: millis() when all-blocked started; 0 = not currently blocked
 uint32_t bay2BlockedSince = 0;      // Bay 2: same, independent timer
 
-// --- pressure plate tuning ---
+// --- pressure plate tuning (entry) ---
 const int16_t  PRESSURE_DELTA_THRESHOLD = 120; // raw ADC counts above baseline = "pressed"
 const uint32_t PLATE_DEBOUNCE_MS        = 300; // must be stable this long before it counts
 int16_t plateBaseline = 0;
@@ -86,12 +102,19 @@ bool plateCandidateActive = false;
 uint32_t plateCandidateSince = 0;
 bool plateActive = false;
 
+// --- pressure plate tuning (exit) - same thresholds, independent state ---
+int16_t plateExitBaseline = 0;
+bool plateExitCandidateActive = false;
+uint32_t plateExitCandidateSince = 0;
+bool plateExitActive = false;
+
 // --- gate FSM ---
 const int      GATE_CLOSED_ANGLE = 0;
 const int      GATE_OPEN_ANGLE   = 90;
-const uint32_t GATE_HOLD_MS      = 3000; // how long the gate stays open once the plate clears
+const uint32_t GATE_HOLD_MS      = 6000; // how long the gate stays open once the plate clears
 Servo gateServo;
 bool gateOpen = false;
+bool gateForExit = false;  // which plate opened it, so we know which one to wait on
 uint32_t gateHoldUntil = 0; // 0 = not yet counting down
 
 // Fires one HC-SR04 (given its own TRIG pin) and returns distance in cm, or
@@ -163,27 +186,27 @@ void setBuzzer2(bool on) {
 // plate", not a calibrated absolute pressure, so this skips the full
 // temperature-compensation sequence and just reads the raw pressure
 // register directly.
-int16_t readRawPressure() {
-  Wire.beginTransmission(BMP180_ADDR);
-  Wire.write(0xF4);
-  Wire.write(0x34); // start pressure measurement, OSS = 0
-  Wire.endTransmission();
+int16_t readRawPressure(TwoWire &bus) {
+  bus.beginTransmission(BMP180_ADDR);
+  bus.write(0xF4);
+  bus.write(0x34); // start pressure measurement, OSS = 0
+  bus.endTransmission();
   delay(5);
 
-  Wire.beginTransmission(BMP180_ADDR);
-  Wire.write(0xF6);
-  Wire.endTransmission(false);
-  Wire.requestFrom(BMP180_ADDR, (uint8_t)2);
-  if (Wire.available() < 2) return 0;
-  uint8_t msb = Wire.read();
-  uint8_t lsb = Wire.read();
+  bus.beginTransmission(BMP180_ADDR);
+  bus.write(0xF6);
+  bus.endTransmission(false);
+  bus.requestFrom(BMP180_ADDR, (uint8_t)2);
+  if (bus.available() < 2) return 0;
+  uint8_t msb = bus.read();
+  uint8_t lsb = bus.read();
   return (int16_t)((msb << 8) | lsb);
 }
 
 // Updates plateActive with the same debounce pattern used elsewhere: a
 // candidate state must hold steady for PLATE_DEBOUNCE_MS before it commits.
 void servicePlate() {
-  int16_t raw = readRawPressure();
+  int16_t raw = readRawPressure(Wire);
   int16_t delta = raw - plateBaseline;
   bool rawActive = delta > PRESSURE_DELTA_THRESHOLD;
 
@@ -196,8 +219,25 @@ void servicePlate() {
   }
 }
 
-// Opens the gate on a plate press; once the plate clears, holds open for
-// GATE_HOLD_MS before closing again.
+// Exit plate - identical logic to servicePlate(), own bus/state.
+void servicePlateExit() {
+  int16_t raw = readRawPressure(ExitWire);
+  int16_t delta = raw - plateExitBaseline;
+  bool rawActive = delta > PRESSURE_DELTA_THRESHOLD;
+
+  if (rawActive != plateExitCandidateActive) {
+    plateExitCandidateActive = rawActive;
+    plateExitCandidateSince = millis();
+  }
+  if ((millis() - plateExitCandidateSince) >= PLATE_DEBOUNCE_MS) {
+    plateExitActive = plateExitCandidateActive;
+  }
+}
+
+// Opens the gate when EITHER plate is pressed; once that same plate clears,
+// holds open for GATE_HOLD_MS before closing again. If both were pressed at
+// once, entry takes priority (an edge case, not something either plate's
+// normal use should trigger).
 void serviceGate() {
   uint32_t now = millis();
 
@@ -205,15 +245,23 @@ void serviceGate() {
     if (plateActive) {
       gateServo.write(GATE_OPEN_ANGLE);
       gateOpen = true;
+      gateForExit = false;
       gateHoldUntil = 0;
-      Serial.println("[GATE] Opening");
+      Serial.println("[GATE] Opening (entry)");
+    } else if (plateExitActive) {
+      gateServo.write(GATE_OPEN_ANGLE);
+      gateOpen = true;
+      gateForExit = true;
+      gateHoldUntil = 0;
+      Serial.println("[GATE] Opening (exit)");
     }
     return;
   }
 
-  // Gate is open: start the hold timer once the plate is released, then
-  // close once that hold time has passed.
-  if (!plateActive && gateHoldUntil == 0) {
+  // Gate is open: start the hold timer once the relevant plate is released,
+  // then close once that hold time has passed.
+  bool relevantActive = gateForExit ? plateExitActive : plateActive;
+  if (!relevantActive && gateHoldUntil == 0) {
     gateHoldUntil = now + GATE_HOLD_MS;
   }
   if (gateHoldUntil != 0 && now >= gateHoldUntil) {
@@ -221,6 +269,26 @@ void serviceGate() {
     gateOpen = false;
     gateHoldUntil = 0;
     Serial.println("[GATE] Closing");
+  }
+}
+
+// Flashes gateLed (toggles every GATE_LED_FLASH_MS) for the entire time the
+// gate is open - triggered by a plate press, continues through the post-
+// clear hold, stops the moment the gate actually closes.
+void serviceGateLed() {
+  if (!gateOpen) {
+    if (gateLedState) {
+      gateLedState = false;
+      digitalWrite(GATE_LED_PIN, LOW);
+    }
+    return;
+  }
+
+  uint32_t now = millis();
+  if (now - gateLedLastToggle >= GATE_LED_FLASH_MS) {
+    gateLedLastToggle = now;
+    gateLedState = !gateLedState;
+    digitalWrite(GATE_LED_PIN, gateLedState);
   }
 }
 
@@ -244,9 +312,13 @@ void setup() {
   pinMode(LED2_G, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(BUZZER2_PIN, OUTPUT);
+  pinMode(GATE_LED_PIN, OUTPUT);
 
   Wire.begin(PLATE_SDA_PIN, PLATE_SCL_PIN);
-  plateBaseline = readRawPressure(); // ambient reading, no vehicle on the plate yet
+  plateBaseline = readRawPressure(Wire); // ambient reading, no vehicle on the plate yet
+
+  ExitWire.begin(PLATE2_SDA_PIN, PLATE2_SCL_PIN);
+  plateExitBaseline = readRawPressure(ExitWire);
 
   gateServo.setPeriodHertz(50);
   gateServo.attach(GATE_SERVO_PIN, 500, 2500);
@@ -259,7 +331,9 @@ void loop() {
   lastReadAt = now;
 
   servicePlate();
+  servicePlateExit();
   serviceGate();
+  serviceGateLed();
 
   float topDistance   = readDistanceCm(TOP_TRIG_PIN);
   float leftDistance  = readDistanceCm(LEFT_TRIG_PIN);

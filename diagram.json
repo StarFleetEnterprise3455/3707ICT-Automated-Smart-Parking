@@ -22,10 +22,17 @@
     { "type": "wokwi-resistor", "id": "r2R", "top": 410, "left": 1190, "rotate": 90, "attrs": { "value": "220" } },
     { "type": "wokwi-resistor", "id": "r2G", "top": 440, "left": 1190, "rotate": 90, "attrs": { "value": "220" } },
 
-    { "type": "board-bmp180", "id": "plate", "top": 600, "left": 550, "attrs": { "pressure": "101325" } },
+    { "type": "board-bmp180", "id": "plate", "top": 600, "left": 400, "attrs": { "pressure": "101325" } },
+    { "type": "wokwi-text", "id": "labelEntry", "top": 545, "left": 385, "attrs": { "text": "ENTRY\n(arriving car)" } },
+
+    { "type": "board-bmp180", "id": "plateExit", "top": 600, "left": 550, "attrs": { "pressure": "101325" } },
+    { "type": "wokwi-text", "id": "labelExit", "top": 545, "left": 545, "attrs": { "text": "EXIT\n(departing car)" } },
     { "type": "wokwi-servo", "id": "gateServo", "top": 600, "left": 700, "attrs": {} },
     { "type": "wokwi-buzzer", "id": "buzzer", "top": 600, "left": 900, "attrs": { "volume": "0.2" } },
-    { "type": "wokwi-buzzer", "id": "buzzer2", "top": 700, "left": 900, "attrs": { "volume": "0.2" } }
+    { "type": "wokwi-buzzer", "id": "buzzer2", "top": 700, "left": 900, "attrs": { "volume": "0.2" } },
+
+    { "type": "wokwi-led", "id": "gateLed", "top": 700, "left": 700, "attrs": { "color": "blue" } },
+    { "type": "wokwi-resistor", "id": "rGate", "top": 700, "left": 640, "rotate": 90, "attrs": { "value": "220" } }
   ],
   "connections": [
     ["sensorTop:VCC", "esp32:VIN", "red", []],
@@ -77,6 +84,11 @@
     ["plate:SDA", "esp32:D21", "blue", []],
     ["plate:SCL", "esp32:D22", "orange", []],
 
+    ["plateExit:VCC", "esp32:3V3", "red", []],
+    ["plateExit:GND", "esp32:GND.2", "black", []],
+    ["plateExit:SDA", "esp32:D26", "blue", []],
+    ["plateExit:SCL", "esp32:D32", "orange", []],
+
     ["gateServo:PWM", "esp32:D18", "green", []],
     ["gateServo:V+", "esp32:VIN", "red", []],
     ["gateServo:GND", "esp32:GND.2", "black", []],
@@ -85,6 +97,10 @@
     ["buzzer:1", "esp32:GND.1", "black", []],
 
     ["buzzer2:2", "esp32:D5", "green", []],
-    ["buzzer2:1", "esp32:GND.2", "black", []]
+    ["buzzer2:1", "esp32:GND.2", "black", []],
+
+    ["esp32:RX2", "rGate:1", "purple", []],
+    ["rGate:2", "gateLed:A", "purple", []],
+    ["gateLed:C", "esp32:GND.1", "black", []]
   ]
 }
