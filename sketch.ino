@@ -3,6 +3,7 @@
 #define TRIG_PIN 5
 #define ECHO_PIN 18
 #define OVERSTAY_LIMIT 20000
+#define MAX_INVALID_READINGS 5
 
 // put function declarations here:
 int myFunction(int, int);
@@ -10,6 +11,7 @@ int myFunction(int, int);
 unsigned long occupiedStartTime = 0;
 bool isOccupied = false;
 bool buzzerOn = false;
+int invalidReadingsCount = 0;
 
 
 
@@ -32,7 +34,7 @@ void loop() {
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
-  long duration = pulseIn(ECHO_PIN, HIGH);
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000); // 30 seconds timeout
   float distance = duration * 0.034 / 2;
 
   Serial.print("Distance: ");
@@ -42,8 +44,11 @@ void loop() {
   enum ParkingState {
   VACANT,
   IN_PROCESS,
-  OCCUPIED
+  OCCUPIED,
+  UNCERTAIN,
+  FAULT
 };
+
 
 ParkingState currentState = VACANT;
 
@@ -81,8 +86,31 @@ if (currentState == OCCUPIED){
   // Add code to deactivate the buzzer here
 }
 
+if (duration == 0) {
+  invalidReadingsCount++;
+  if (invalidReadingsCount >= MAX_INVALID_READINGS) {
+    currentState = FAULT;
+    Serial.println("Fault: Sensor readings are invalid.");
+    // Add code to handle the fault condition here
+  }
+  else {
+    currentState = UNCERTAIN;
+    Serial.println("Uncertain: Sensor readings are inconsistent.");
+  }
+} else {
 
+  invalidReadingsCount = 0; // Reset the count on a valid reading
+
+}
+
+if (currentState == FAULT) {
+  Serial.println("Fault: Please check the sensor.");
+  // Add code to handle the fault condition here
+} else if (currentState == UNCERTAIN) {
+  Serial.println("Uncertain: Please check the sensor readings.");
+  // Add code to handle the uncertain condition here
+}
 
 delay(1000);
 
-}
+};
