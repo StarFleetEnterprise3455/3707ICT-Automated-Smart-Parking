@@ -465,7 +465,10 @@
 +  TimeSync();
 +  MQTT();
 +  publishChangedTelemetry();
-+  CloudHeartbeat();
++  
+
+
+CloudHeartbeat();
 +}
 +
 +
