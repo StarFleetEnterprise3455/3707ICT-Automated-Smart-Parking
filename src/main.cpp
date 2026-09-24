@@ -110,6 +110,31 @@ const uint32_t READ_INTERVAL_MS = 150;
 
 uint32_t lastReadAt = 0;
 
+//Sensor Invalid readings
+
+const int MAX_INVALID_READINGS = 10;
+
+int bay1InvalidReadings = 0;
+int bay2InvalidReadings = 0;
+
+//Sensor Parking States
+
+enum ParkingState {
+    VACANT,
+    IN_PROGRESS,
+    OCCUPIED,
+    UNCERTAIN,
+    FAULT
+
+};
+
+ParkingState bay1State = VACANT;
+
+ParkingState bay2State = VACANT;
+
+
+
+
 // ============================================================
 // OVERSTAY SETTINGS
 // ============================================================
@@ -222,6 +247,21 @@ bool isBlocked(float distanceCm)
       distanceCm >= 0 &&
       distanceCm <= NEAR_CM;
 }
+
+// Anomaly Detector
+
+bool hasSensorAnomaly(
+    float topDistance,
+    float leftDistance,
+    float rightDistance
+) {
+    return
+        topDistance < 0 ||
+        leftDistance < 0 ||
+        rightDistance < 0;
+}
+
+
 
 // ============================================================
 // BAY 1 LED
