@@ -1592,11 +1592,9 @@ void loop()
         entryRefusedLatched;
     setBuzzer(
         bay1OverstayActive ||
-        bay1SensorState.sensorFault ||
         fullCapacityEntryWarning);
     setBuzzer2(
         bay2OverstayActive ||
-        bay2SensorState.sensorFault ||
         fullCapacityEntryWarning);
     Serial.printf(
         "Entry plate delta: %d / %d%s | Exit plate delta: %d / %d%s%s\n",
